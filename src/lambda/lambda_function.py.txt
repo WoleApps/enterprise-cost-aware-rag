@@ -1,0 +1,101 @@
+import json
+import os
+import boto3
+from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
+
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+COLLECTION_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")
+INDEX_NAME = os.environ.get("INDEX_NAME", "enterprise-rag-index")
+
+EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v1"
+LLM_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
+session = boto3.Session()
+credentials = session.get_credentials()
+aws_auth = AWSV4SignerAuth(credentials, REGION, "aoss")
+
+bedrock_runtime = session.client("bedrock-runtime", region_name=REGION)
+
+opensearch_client = OpenSearch(
+    hosts=[{"host": COLLECTION_ENDPOINT.replace("https://", "").rstrip("/"), "port": 443}],
+    http_auth=aws_auth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection,
+    pool_maxsize=10
+)
+
+def get_embedding(text: str) -> list:
+    response = bedrock_runtime.invoke_model(
+        modelId=EMBEDDING_MODEL_ID,
+        body=json.dumps({"inputText": text})
+    )
+    return json.loads(response["body"].read())["embedding"]
+
+def search_vectors(query_vector: list, k: int = 3) -> list:
+    query = {
+        "size": k,
+        "query": {
+            "knn": {
+                "vector_field": {
+                    "vector": query_vector,
+                    "k": k
+                }
+            }
+        }
+    }
+    response = opensearch_client.search(body=query, index=INDEX_NAME)
+    return [hit["_source"]["text"] for hit in response["hits"]["hits"]]
+
+def invoke_llm(user_query: str, context_chunks: list) -> str:
+    context_text = "\n\n---\n\n".join(context_chunks)
+    system_prompt = (
+        "You are an expert enterprise knowledge assistant. Answer the user's query "
+        "strictly and accurately using only the provided context chunks."
+    )
+    user_message = f"Context Information:\n{context_text}\n\nUser Query: {user_query}"
+
+    response = bedrock_runtime.converse(
+        modelId=LLM_MODEL_ID,
+        messages=[{"role": "user", "content": [{"text": user_message}]}],
+        system=[{"text": system_prompt}],
+        inferenceConfig={"maxTokens": 600, "temperature": 0.1}
+    )
+    return response["output"]["message"]["content"][0]["text"]
+
+def lambda_handler(event, context):
+    try:
+        body = json.loads(event.get("body", "{}")) if isinstance(event.get("body"), str) else event
+        user_query = body.get("query")
+        
+        if not user_query:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Missing required 'query' parameter in request body."})
+            }
+
+        query_vector = get_embedding(user_query)
+        retrieved_chunks = search_vectors(query_vector, k=3)
+        if not retrieved_chunks:
+            retrieved_chunks = ["No relevant enterprise documentation found."]
+
+        answer = invoke_llm(user_query, retrieved_chunks)
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({
+                "query": user_query,
+                "sources_retrieved": len(retrieved_chunks),
+                "answer": answer
+            })
+        }
+
+    except Exception as e:
+        print(f"Critical execution error in RAG pipeline: {str(e)}")
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "Internal server error executing RAG pipeline.", "details": str(e)})
+        }

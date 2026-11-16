@@ -1,0 +1,10 @@
+enterprise-cost-aware-rag/
+├── infrastructure/
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+├── src/
+│   └── lambda/
+│       ├── lambda_function.py
+│       └── requirements.txt
+└── README.md

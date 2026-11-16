@@ -1,0 +1,14 @@
+output "opensearch_collection_endpoint" {
+  value       = aws_opensearchserverless_collection.vector_store.collection_endpoint
+  description = "Data endpoint URL for Amazon OpenSearch Serverless collection."
+}
+
+output "rag_execution_role_arn" {
+  value       = aws_iam_role.rag_execution_role.arn
+  description = "IAM execution role ARN assigned to Lambda orchestrators."
+}
+
+output "sns_governance_topic_arn" {
+  value       = aws_sns_topic.governance_alerts.arn
+  description = "ARN of the SNS topic tied to CloudWatch token and error alarms."
+}

@@ -1,0 +1,16 @@
+variable "aws_region" {
+  type        = string
+  default     = "us-east-1"
+  description = "Target AWS region for deploying serverless RAG infrastructure."
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Email address to receive CloudWatch governance & cost alert notifications."
+}
+
+variable "token_spend_threshold" {
+  type        = number
+  default     = 50000
+  description = "Maximum allowable input token volume over a 5-minute window before triggering cost alarms."
+}
